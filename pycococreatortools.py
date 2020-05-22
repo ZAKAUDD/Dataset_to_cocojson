@@ -8,6 +8,7 @@ from itertools import groupby
 from skimage import measure
 from PIL import Image
 from pycocotools import mask
+import cv2
 
 convert = lambda text: int(text) if text.isdigit() else text.lower()
 natrual_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
@@ -46,20 +47,27 @@ def binary_mask_to_polygon(binary_mask, tolerance=0):
 
     """
     polygons = []
-    # pad mask to close contours of shapes which start and end at an edge
-    padded_binary_mask = np.pad(binary_mask, pad_width=1, mode='constant', constant_values=0)
-    contours = measure.find_contours(padded_binary_mask, 0.5)
-    contours = np.subtract(contours, 1)
+    ret, thresh = cv2.threshold(binary_mask, 127, 255, 1)
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # num = len(contours)
     for contour in contours:
-        contour = close_contour(contour)
-        contour = measure.approximate_polygon(contour, tolerance)
-        if len(contour) < 3:
-            continue
-        contour = np.flip(contour, axis=1)
-        segmentation = contour.ravel().tolist()
-        # after padding and subtracting 1 we may get -0.5 points in our segmentation 
-        segmentation = [0 if i < 0 else i for i in segmentation]
-        polygons.append(segmentation)
+        conbine_contour = contour.ravel()
+        polygons.append(conbine_contour)
+    # polygons = []
+    # # pad mask to close contours of shapes which start and end at an edge
+    # padded_binary_mask = np.pad(binary_mask, pad_width=1, mode='constant', constant_values=0)
+    # contours = measure.find_contours(padded_binary_mask, 0.5)
+    # contours = np.subtract(contours, 1)
+    # for contour in contours:
+    #     contour = close_contour(contour)
+    #     contour = measure.approximate_polygon(contour, tolerance)
+    #     if len(contour) < 3:
+    #         continue
+    #     contour = np.flip(contour, axis=1)
+    #     segmentation = contour.ravel().tolist()
+    #     # after padding and subtracting 1 we may get -0.5 points in our segmentation
+    #     segmentation = [0 if i < 0 else i for i in segmentation]
+    #     polygons.append(segmentation)
 
     return polygons
 
@@ -85,38 +93,42 @@ def create_image_info(image_id, file_name, image_size,
 def create_annotation_info(annotation_id, image_id, category_info, binary_mask, 
                            image_size=None, tolerance=2, bounding_box=None):
     if bounding_box is None:
-        obj_ids = np.unique(binary_mask)
-        obj = []
         bounding_box = []
-        for j in obj_ids:
-            if j < 255:
-                obj.append(j)
-        num_obj = len(obj)
-        if num_obj > 1:
-            for i in range(num_obj):
-                masks = binary_mask == obj[i]
-                pos = np.where(masks)
-                xmin = np.min(pos[1])
-                xmax = np.max(pos[1])
-                ymin = np.min(pos[0])
-                ymax = np.max(pos[0])
-                bounding_box.append([xmin, ymin, xmax, ymax])
-        else:
-            masks = binary_mask == obj
-            pos = np.where(masks)
-            xmin = np.min(pos[1])
-            xmax = np.max(pos[1])
-            ymin = np.min(pos[0])
-            ymax = np.max(pos[0])
+        ret, thresh = cv2.threshold(binary_mask, 127, 255, 1)
+        contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            xmin = np.min(x)
+            xmax = np.max(x + w)
+            ymin = np.min(y)
+            ymax = np.max(y + h)
             bounding_box.append([xmin, ymin, xmax, ymax])
-    if image_size is not None:
-        binary_mask = resize_binary_mask(binary_mask, image_size)
 
-    binary_mask_encoded = mask.encode(np.asfortranarray(binary_mask.astype(np.uint8)))
-
-    area = mask.area(binary_mask_encoded)
-    if area < 1:
-        return None
+    # if bounding_box is None:
+    #     obj_ids = np.unique(binary_mask)
+    #     obj = []
+    #     bounding_box = []
+    #     for j in obj_ids:
+    #         if j < 255:
+    #             obj.append(j)
+    #     num_obj = len(obj)
+    #     if num_obj > 1:
+    #         for i in range(num_obj):
+    #             masks = binary_mask == obj[i]
+    #             pos = np.where(masks)
+    #             xmin = np.min(pos[1])
+    #             xmax = np.max(pos[1])
+    #             ymin = np.min(pos[0])
+    #             ymax = np.max(pos[0])
+    #             bounding_box.append([xmin, ymin, xmax, ymax])
+    #     else:
+    #         masks = binary_mask == obj
+    #         pos = np.where(masks)
+    #         xmin = np.min(pos[1])
+    #         xmax = np.max(pos[1])
+    #         ymin = np.min(pos[0])
+    #         ymax = np.max(pos[0])
+    #         bounding_box.append([xmin, ymin, xmax, ymax])
 
     if category_info["is_crowd"]:
         is_crowd = 1
@@ -126,6 +138,15 @@ def create_annotation_info(annotation_id, image_id, category_info, binary_mask,
         segmentation = binary_mask_to_polygon(binary_mask, tolerance)
         if not segmentation:
             return None
+
+    if image_size is not None:
+        binary_mask = resize_binary_mask(binary_mask, image_size)
+
+    binary_mask_encoded = mask.encode(np.asfortranarray(binary_mask.astype(np.uint8)))
+
+    area = mask.area(binary_mask_encoded)
+    if area < 1:
+        return None
 
     annotation_info = {
         "id": annotation_id,
