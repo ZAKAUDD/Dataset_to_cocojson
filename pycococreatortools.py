@@ -84,7 +84,31 @@ def create_image_info(image_id, file_name, image_size,
 
 def create_annotation_info(annotation_id, image_id, category_info, binary_mask, 
                            image_size=None, tolerance=2, bounding_box=None):
-
+    if bounding_box is None:
+        obj_ids = np.unique(binary_mask)
+        obj = []
+        bounding_box = []
+        for j in obj_ids:
+            if j < 255:
+                obj.append(j)
+        num_obj = len(obj)
+        if num_obj > 1:
+            for i in range(num_obj):
+                masks = binary_mask == obj[i]
+                pos = np.where(masks)
+                xmin = np.min(pos[1])
+                xmax = np.max(pos[1])
+                ymin = np.min(pos[0])
+                ymax = np.max(pos[0])
+                bounding_box.append([xmin, ymin, xmax, ymax])
+        else:
+            masks = binary_mask == obj
+            pos = np.where(masks)
+            xmin = np.min(pos[1])
+            xmax = np.max(pos[1])
+            ymin = np.min(pos[0])
+            ymax = np.max(pos[0])
+            bounding_box.append([xmin, ymin, xmax, ymax])
     if image_size is not None:
         binary_mask = resize_binary_mask(binary_mask, image_size)
 
@@ -93,9 +117,6 @@ def create_annotation_info(annotation_id, image_id, category_info, binary_mask,
     area = mask.area(binary_mask_encoded)
     if area < 1:
         return None
-
-    if bounding_box is None:
-        bounding_box = mask.toBbox(binary_mask_encoded)
 
     if category_info["is_crowd"]:
         is_crowd = 1
@@ -112,7 +133,7 @@ def create_annotation_info(annotation_id, image_id, category_info, binary_mask,
         "category_id": category_info["id"],
         "iscrowd": is_crowd,
         "area": area.tolist(),
-        "bbox": bounding_box.tolist(),
+        "bbox": bounding_box,
         "segmentation": segmentation,
         "width": binary_mask.shape[1],
         "height": binary_mask.shape[0],
